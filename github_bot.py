@@ -99,8 +99,8 @@ def format_lessons(lessons):
 async def main():
     bot = Bot(token=API_TOKEN)
     try:
-        try: df = pd.read_excel('schedule.xlsx', header=None)
-        except: df = pd.read_csv('schedule.csv', header=None)
+        try: df = pd.read_excel('4 курс 8 фак весна 25-26.xlsx', header=None)
+        except: df = pd.read_csv('4 курс 8 фак весна 25-26.cvs', header=None)
     except Exception as e:
         print(f"Ошибка файла: {e}"); return
 
