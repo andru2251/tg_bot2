@@ -62,35 +62,36 @@ def get_schedule_for_date(df, target_date):
     for i, c in enumerate(cols):
         if c >= df.shape[1]: continue
         
-        # 1. Метаданные: всегда над строчкой 7-21
         meta = str(df.iloc[base_row_721 - 1, c]).strip()
-        if meta.lower() == 'nan': meta = ""
-
-        # 2. Предмет и Аудитория
         subj_721 = str(df.iloc[base_row_721, c]).strip()
         subj_821 = str(df.iloc[base_row_721 + 1, c]).strip()
         
-        final_subj = ""
-        final_room = ""
+        final_subj, final_room, final_meta = "", "", ""
 
-        # Если в строке 7-21 есть предмет (индивидуальная пара)
+        # Логика: если в 7-21 есть текст
         if subj_721.lower() != 'nan' and len(subj_721) > 1:
             final_subj = subj_721
-            # Аудитория под строчкой 7-21
+            final_meta = meta if meta.lower() != 'nan' else ""
             room_val = str(df.iloc[base_row_721 + 1, c]).strip()
             if room_val.lower() != 'nan' and (re.search(r'\d', room_val) or 'ауд' in room_val.lower()):
                 final_room = room_val
         
-        # Если в строке 7-21 пусто, но в строке 8-21 есть предмет (совместная пара)
+        # Если в 7-21 пусто, проверяем объединение с 8-21
         elif subj_821.lower() != 'nan' and len(subj_821) > 1:
             final_subj = subj_821
-            # Аудитория под строчкой 8-21
+            final_meta = meta if meta.lower() != 'nan' else ""
             room_val = str(df.iloc[base_row_721 + 2, c]).strip()
             if room_val.lower() != 'nan' and (re.search(r'\d', room_val) or 'ауд' in room_val.lower()):
                 final_room = room_val
+        
+        # Подхват данных из предыдущей колонки (для объединенных 1-2-3 пар)
+        if (not final_subj or final_subj.lower() == 'nan') and i > 0 and raw_lessons:
+            final_subj = raw_lessons[-1]['subj']
+            final_meta = raw_lessons[-1]['meta']
+            final_room = raw_lessons[-1]['room']
 
-        if final_subj:
-            raw_lessons.append({'idx': i + 1, 'subj': final_subj, 'meta': meta, 'room': final_room})
+        if final_subj and final_subj.lower() != 'nan':
+            raw_lessons.append({'idx': i + 1, 'subj': final_subj, 'meta': final_meta, 'room': final_room})
             
     return raw_lessons
 
@@ -101,6 +102,9 @@ def format_lessons(lessons):
         s_key = clean_subj(l['subj'])
         if merged and merged[-1]['subj_key'] == s_key:
             merged[-1]['indices'].append(l['idx'])
+            # Если в новой ячейке метаданные или кабинет полнее — обновляем
+            if len(str(l['meta'])) > len(str(merged[-1]['meta'])): merged[-1]['meta'] = l['meta']
+            if len(str(l['room'])) > len(str(merged[-1]['room'])): merged[-1]['room'] = l['room']
         else:
             merged.append({'indices':[l['idx']], 'subj':l['subj'], 'subj_key':s_key, 'meta':l['meta'], 'room':l['room']})
     
@@ -120,7 +124,7 @@ async def main():
     except:
         df = pd.read_excel(FILE_NAME, header=None)
 
-    target = datetime.now() + timedelta(hours=3) + timedelta(days=6)
+    target = datetime.now() + timedelta(hours=3) + timedelta(days=1)
     if target.weekday() == 6: target += timedelta(days=1)
 
     today_lessons = get_schedule_for_date(df, target)
