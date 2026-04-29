@@ -8,6 +8,9 @@ from aiogram import Bot
 API_TOKEN = os.getenv('API_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
 
+# Точное имя вашего файла
+FILE_NAME = '4 курс 8 фак весна 25-26.xlsx'
+
 MONTHS_RU = {
     1: "января", 2: "февраля", 3: "марта", 4: "апреля",
     5: "мая", 6: "июня", 7: "июля", 8: "августа",
@@ -78,10 +81,9 @@ def get_schedule_for_date(df, target_date):
 
         if subj:
             raw_lessons.append({'idx': pair_idx + 1, 'subj': subj, 'meta': meta, 'room': room})
-        elif pair_idx > 0 and raw_lessons: # ИСПРАВЛЕНО: pair_idx вместо i
+        elif pair_idx > 0 and raw_lessons: 
             prev = raw_lessons[-1]
-            if prev['idx'] == pair_idx: # Склеиваем только если это продолжение той же временной ячейки
-                 raw_lessons.append({'idx': pair_idx + 1, 'subj': prev['subj'], 'meta': prev['meta'], 'room': prev['room']})
+            raw_lessons.append({'idx': pair_idx + 1, 'subj': prev['subj'], 'meta': prev['meta'], 'room': prev['room']})
             
     return raw_lessons
 
@@ -107,13 +109,21 @@ def format_lessons(lessons):
 
 async def main():
     bot = Bot(token=API_TOKEN)
+    
+    # Проверка наличия файла перед чтением
+    if not os.path.exists(FILE_NAME):
+        print(f"❌ ОШИБКА: Файл '{FILE_NAME}' не найден в корне репозитория!")
+        print(f"DEBUG: Доступные файлы: {os.listdir('.')}")
+        return
+
     try:
-        # Пробуем загрузить лист с группой 7-21 (индекс 2)
-        df = pd.read_excel('schedule.xlsx', header=None, sheet_name=2)
+        # Пытаемся загрузить лист с группой 7-21 (индекс 2)
+        df = pd.read_excel(FILE_NAME, header=None, sheet_name=2)
     except Exception as e:
         print(f"DEBUG: Не удалось загрузить лист по индексу 2: {e}")
-        df = pd.read_excel('schedule.xlsx', header=None)
+        df = pd.read_excel(FILE_NAME, header=None)
 
+    # Завтра (МСК +3)
     target = datetime.now() + timedelta(hours=3) + timedelta(days=1)
     if target.weekday() == 6: target += timedelta(days=1)
 
