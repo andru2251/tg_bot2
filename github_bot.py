@@ -50,7 +50,6 @@ def get_schedule_for_date(df, target_date):
     
     if date_row == -1: return []
 
-    # Находим базовую строку 7-21 для этого блока
     base_row_721 = -1
     for r in range(date_row, min(date_row + 25, df.shape[0])):
         if "7-21" in str(df.iloc[r, 0]):
@@ -63,36 +62,36 @@ def get_schedule_for_date(df, target_date):
     for i, c in enumerate(cols):
         if c >= df.shape[1]: continue
         
-        # 1. Метаданные (на 1 выше 7-21)
         meta = str(df.iloc[base_row_721 - 1, c]).strip()
         if meta.lower() == 'nan': meta = ""
 
-        # 2. Название предмета (в строке 7-21)
-        subj = str(df.iloc[base_row_721, c]).strip()
-        room = ""
+        subj_721 = str(df.iloc[base_row_721, c]).strip()
+        subj_821 = str(df.iloc[base_row_721 + 1, c]).strip()
+        
+        final_subj = ""
+        final_room = ""
 
-        # Логика поиска кабинета по твоим условиям:
-        if subj.lower() != 'nan' and len(subj) > 1:
-            # Вариант А: Пара только у 7-21. Кабинет под строчкой 7-21 (+1)
-            room_val = str(df.iloc[base_row_721 + 1, c]).strip()
-            room = room_val if room_val.lower() != 'nan' else ""
-        else:
-            # Вариант Б: Пара объединена (в 7-21 пусто).
-            # Ищем название в строке ниже (8-21), а кабинет на 4 строки ниже от 7-21
-            subj_alt = str(df.iloc[base_row_721 + 1, c]).strip()
-            if subj_alt.lower() != 'nan' and len(subj_alt) > 1:
-                subj = subj_alt
-                room_val = str(df.iloc[base_row_721 + 4, c]).strip()
-                room = room_val if room_val.lower() != 'nan' else ""
+        # СТРОГАЯ ЛОГИКА ПОИСКА ПРЕДМЕТА И КАБИНЕТА
+        if subj_721.lower() != 'nan' and len(subj_721) > 1:
+            # Пара только у 7-21
+            final_subj = subj_721
+            room_val = str(df.iloc[base_row_721 + 1, c]).strip() # 7-21 + 1
+            final_room = room_val if room_val.lower() != 'nan' else ""
+        
+        elif subj_821.lower() != 'nan' and len(subj_821) > 1:
+            # Совместная пара с 8-21
+            final_subj = subj_821
+            room_val = str(df.iloc[base_row_721 + 4, c]).strip() # 7-21 + 4
+            final_room = room_val if room_val.lower() != 'nan' else ""
 
-        # Если это объединенная пара на 1-2 или 1-3 (подхват из соседнего столбца)
-        if (not subj or subj.lower() == 'nan') and i > 0 and raw_lessons:
-            subj = raw_lessons[-1]['subj']
+        # Склейка объединенных ячеек по горизонтали
+        if (not final_subj or final_subj.lower() == 'nan') and i > 0 and raw_lessons:
+            final_subj = raw_lessons[-1]['subj']
             meta = raw_lessons[-1]['meta']
-            room = raw_lessons[-1]['room']
+            final_room = raw_lessons[-1]['room']
 
-        if subj and subj.lower() != 'nan':
-            raw_lessons.append({'idx': i + 1, 'subj': subj, 'meta': meta, 'room': room})
+        if final_subj and final_subj.lower() != 'nan':
+            raw_lessons.append({'idx': i + 1, 'subj': final_subj, 'meta': meta, 'room': final_room})
             
     return raw_lessons
 
@@ -124,13 +123,13 @@ async def main():
     except:
         df = pd.read_excel(FILE_NAME, header=None)
 
-    # Вывод на 7 дней подряд для проверки
+    # Вывод на неделю для проверки
     start_date = datetime.now() + timedelta(hours=3) + timedelta(days=1)
     final_text = f"📅 **Проверка расписания на неделю (с {start_date.day} {MONTHS_RU[start_date.month]}):**\n\n"
 
     for i in range(7):
         curr = start_date + timedelta(days=i)
-        if curr.weekday() == 6: continue # Пропуск воскресенья
+        if curr.weekday() == 6: continue 
         
         day_lessons = get_schedule_for_date(df, curr)
         d_name = DAYS_RU[curr.weekday()]
