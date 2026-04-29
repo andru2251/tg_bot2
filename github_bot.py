@@ -50,8 +50,9 @@ def get_schedule_for_date(df, target_date):
     
     if date_row == -1: return []
 
+    # Находим базовую строку 7-21 для этого блока
     base_row_721 = -1
-    for r in range(date_row, min(date_row + 20, df.shape[0])):
+    for r in range(date_row, min(date_row + 25, df.shape[0])):
         if "7-21" in str(df.iloc[r, 0]):
             base_row_721 = r
             break
@@ -62,36 +63,36 @@ def get_schedule_for_date(df, target_date):
     for i, c in enumerate(cols):
         if c >= df.shape[1]: continue
         
+        # 1. Метаданные (на 1 выше 7-21)
         meta = str(df.iloc[base_row_721 - 1, c]).strip()
-        subj_721 = str(df.iloc[base_row_721, c]).strip()
-        subj_821 = str(df.iloc[base_row_721 + 1, c]).strip()
-        
-        final_subj, final_room, final_meta = "", "", ""
+        if meta.lower() == 'nan': meta = ""
 
-        # Логика: если в 7-21 есть текст
-        if subj_721.lower() != 'nan' and len(subj_721) > 1:
-            final_subj = subj_721
-            final_meta = meta if meta.lower() != 'nan' else ""
+        # 2. Название предмета (в строке 7-21)
+        subj = str(df.iloc[base_row_721, c]).strip()
+        room = ""
+
+        # Логика поиска кабинета по твоим условиям:
+        if subj.lower() != 'nan' and len(subj) > 1:
+            # Вариант А: Пара только у 7-21. Кабинет под строчкой 7-21 (+1)
             room_val = str(df.iloc[base_row_721 + 1, c]).strip()
-            if room_val.lower() != 'nan' and (re.search(r'\d', room_val) or 'ауд' in room_val.lower()):
-                final_room = room_val
-        
-        # Если в 7-21 пусто, проверяем объединение с 8-21
-        elif subj_821.lower() != 'nan' and len(subj_821) > 1:
-            final_subj = subj_821
-            final_meta = meta if meta.lower() != 'nan' else ""
-            room_val = str(df.iloc[base_row_721 + 2, c]).strip()
-            if room_val.lower() != 'nan' and (re.search(r'\d', room_val) or 'ауд' in room_val.lower()):
-                final_room = room_val
-        
-        # Подхват данных из предыдущей колонки (для объединенных 1-2-3 пар)
-        if (not final_subj or final_subj.lower() == 'nan') and i > 0 and raw_lessons:
-            final_subj = raw_lessons[-1]['subj']
-            final_meta = raw_lessons[-1]['meta']
-            final_room = raw_lessons[-1]['room']
+            room = room_val if room_val.lower() != 'nan' else ""
+        else:
+            # Вариант Б: Пара объединена (в 7-21 пусто).
+            # Ищем название в строке ниже (8-21), а кабинет на 4 строки ниже от 7-21
+            subj_alt = str(df.iloc[base_row_721 + 1, c]).strip()
+            if subj_alt.lower() != 'nan' and len(subj_alt) > 1:
+                subj = subj_alt
+                room_val = str(df.iloc[base_row_721 + 4, c]).strip()
+                room = room_val if room_val.lower() != 'nan' else ""
 
-        if final_subj and final_subj.lower() != 'nan':
-            raw_lessons.append({'idx': i + 1, 'subj': final_subj, 'meta': final_meta, 'room': final_room})
+        # Если это объединенная пара на 1-2 или 1-3 (подхват из соседнего столбца)
+        if (not subj or subj.lower() == 'nan') and i > 0 and raw_lessons:
+            subj = raw_lessons[-1]['subj']
+            meta = raw_lessons[-1]['meta']
+            room = raw_lessons[-1]['room']
+
+        if subj and subj.lower() != 'nan':
+            raw_lessons.append({'idx': i + 1, 'subj': subj, 'meta': meta, 'room': room})
             
     return raw_lessons
 
@@ -102,7 +103,6 @@ def format_lessons(lessons):
         s_key = clean_subj(l['subj'])
         if merged and merged[-1]['subj_key'] == s_key:
             merged[-1]['indices'].append(l['idx'])
-            # Если в новой ячейке метаданные или кабинет полнее — обновляем
             if len(str(l['meta'])) > len(str(merged[-1]['meta'])): merged[-1]['meta'] = l['meta']
             if len(str(l['room'])) > len(str(merged[-1]['room'])): merged[-1]['room'] = l['room']
         else:
@@ -124,34 +124,21 @@ async def main():
     except:
         df = pd.read_excel(FILE_NAME, header=None)
 
-    # Определяем начальную дату (например, завтра)
+    # Вывод на 7 дней подряд для проверки
     start_date = datetime.now() + timedelta(hours=3) + timedelta(days=1)
-    
-    final_text = f"📅 **Расписание на неделю (с {start_date.day} {MONTHS_RU[start_date.month]}):**\n\n"
+    final_text = f"📅 **Проверка расписания на неделю (с {start_date.day} {MONTHS_RU[start_date.month]}):**\n\n"
 
-    # Цикл на 7 дней
     for i in range(7):
-        current_date = start_date + timedelta(days=i)
+        curr = start_date + timedelta(days=i)
+        if curr.weekday() == 6: continue # Пропуск воскресенья
         
-        # Пропускаем воскресенья
-        if current_date.weekday() == 6:
-            continue
-            
-        lessons = get_schedule_for_date(df, current_date)
-        day_name = DAYS_RU[current_date.weekday()]
-        
-        final_text += f"📍 **{current_date.day} {MONTHS_RU[current_date.month]} ({day_name}):**\n"
-        
-        if lessons:
-            final_text += format_lessons(lessons)
-        else:
-            final_text += "🎉 Пар не найдено\n"
-        
-        final_text += "\n" # Разделитель между днями
+        day_lessons = get_schedule_for_date(df, curr)
+        d_name = DAYS_RU[curr.weekday()]
+        final_text += f"📍 **{curr.day} {MONTHS_RU[curr.month]} ({d_name}):**\n"
+        final_text += format_lessons(day_lessons) if day_lessons else "🎉 Пар не найдено\n"
+        final_text += "\n"
 
-    # Отправляем одно большое сообщение
     await bot.send_message(CHAT_ID, final_text, parse_mode="Markdown")
-    
     session = await bot.get_session()
     await session.close()
 
