@@ -37,14 +37,12 @@ def parse_metadata(meta_str):
 
 def get_schedule_for_date(df, target_date):
     weekday = target_date.weekday()
-    if weekday > 5: return [] # Воскресенье пропускаем
+    if weekday > 5: return [] 
     
-    # Пн: столбцы 1,2,3; Вт: 4,5,6 и т.д.
     start_col = 1 + (weekday * 3)
     cols = [start_col, start_col + 1, start_col + 2]
     target_day = str(target_date.day)
     
-    # 1. Ищем строку с датой в колонках дня
     date_row = -1
     for r in range(df.shape[0]):
         for c in cols:
@@ -57,9 +55,7 @@ def get_schedule_for_date(df, target_date):
     
     if date_row == -1: return []
 
-    # 2. Собираем пары из блока под датой (6 строк вниз)
     raw_lessons = []
-    # Пары занимают по 2 строки: (1-2), (3-4), (5-6)
     pair_offsets = [(1, 2), (3, 4), (5, 6)] 
     
     for pair_idx, (off1, off2) in enumerate(pair_offsets):
@@ -73,22 +69,19 @@ def get_schedule_for_date(df, target_date):
                 val = str(df.iloc[curr_r, c]).strip()
                 if not val or val.lower() == 'nan': continue
                 
-                # Тип занятия
                 if any(x in val.lower() for x in ['пз', ' л', ' т', 'вси', 'гз', ' с ', 'па', 'уп', 'з/о']):
                     meta = val
-                # Кабинет
                 elif re.search(r'\d+[а-яa-z]?$', val.lower()) and len(val) < 6:
                     room = val
-                # Предмет
                 elif len(val) > 2 and not val.replace('.','').isdigit():
                     subj = val
 
         if subj:
             raw_lessons.append({'idx': pair_idx + 1, 'subj': subj, 'meta': meta, 'room': room})
-        elif i > 0 and raw_lessons:
-            # Склеивание по горизонтали
+        elif pair_idx > 0 and raw_lessons: # ИСПРАВЛЕНО: pair_idx вместо i
             prev = raw_lessons[-1]
-            raw_lessons.append({'idx': pair_idx + 1, 'subj': prev['subj'], 'meta': prev['meta'], 'room': prev['room']})
+            if prev['idx'] == pair_idx: # Склеиваем только если это продолжение той же временной ячейки
+                 raw_lessons.append({'idx': pair_idx + 1, 'subj': prev['subj'], 'meta': prev['meta'], 'room': prev['room']})
             
     return raw_lessons
 
@@ -115,12 +108,12 @@ def format_lessons(lessons):
 async def main():
     bot = Bot(token=API_TOKEN)
     try:
-        # Читаем лист с группой 7-21 (обычно 3-й по счету)
+        # Пробуем загрузить лист с группой 7-21 (индекс 2)
         df = pd.read_excel('schedule.xlsx', header=None, sheet_name=2)
-    except:
+    except Exception as e:
+        print(f"DEBUG: Не удалось загрузить лист по индексу 2: {e}")
         df = pd.read_excel('schedule.xlsx', header=None)
 
-    # Завтра (МСК +3)
     target = datetime.now() + timedelta(hours=3) + timedelta(days=1)
     if target.weekday() == 6: target += timedelta(days=1)
 
@@ -130,7 +123,6 @@ async def main():
     final_text = f"📅 **Расписание на завтра ({target.day} {MONTHS_RU[target.month]}, {day_name}):**\n\n"
     final_text += format_lessons(today_lessons) if today_lessons else "Пар не найдено. 🎉\n"
 
-    # Важное
     important_content = ""
     found_days, offset = 0, 1
     while found_days < 2 and offset < 10:
