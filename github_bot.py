@@ -14,15 +14,15 @@ MONTHS_RU = {
     9: "сентября", 10: "октября", 11: "ноября", 12: "декабря"
 }
 
+MONTHS_ROOTS = {
+    1: "январ", 2: "феврал", 3: "март", 4: "апрел",
+    5: "май", 6: "июн", 7: "июл", 8: "август",
+    9: "сентябр", 10: "октябр", 11: "ноябр", 12: "декабр"
+}
+
 DAYS_RU = {
     0: "Понедельник", 1: "Вторник", 2: "Среда",
     3: "Четверг", 4: "Пятница", 5: "Суббота", 6: "Воскресенье"
-}
-
-# Столбцы: Пн(2,3,4), Вт(6,7,8), Ср(10,11,12) и т.д.
-DAY_COLUMNS = {
-    0: [1, 2, 3], 1: [5, 6, 7], 2: [9, 10, 11],
-    3: [13, 14, 15], 4: [17, 18, 19], 5: [21, 22, 23]
 }
 
 def clean_subj(s):
@@ -37,52 +37,58 @@ def parse_metadata(meta_str):
 
 def get_schedule_for_date(df, target_date):
     weekday = target_date.weekday()
-    if weekday not in DAY_COLUMNS: return []
+    if weekday > 5: return [] # Воскресенье пропускаем
     
-    cols = DAY_COLUMNS[weekday]
+    # Пн: столбцы 1,2,3; Вт: 4,5,6 и т.д.
+    start_col = 1 + (weekday * 3)
+    cols = [start_col, start_col + 1, start_col + 2]
     target_day = str(target_date.day)
     
-    # 1. Находим строку с датой в нужных столбцах
+    # 1. Ищем строку с датой в колонках дня
     date_row = -1
     for r in range(df.shape[0]):
-        # Проверяем ячейки дня на наличие только числа (даты)
         for c in cols:
             if c < df.shape[1]:
-                cell_val = str(df.iloc[r, c]).strip().split('.')[0]
-                if cell_val == target_day:
+                val = str(df.iloc[r, c]).strip().split('.')[0]
+                if val == target_day:
                     date_row = r
                     break
         if date_row != -1: break
     
     if date_row == -1: return []
 
-    # 2. Анализируем блок из 6 строк ПОД датой
+    # 2. Собираем пары из блока под датой (6 строк вниз)
     raw_lessons = []
-    search_range = range(date_row + 1, min(date_row + 7, df.shape[0]))
-
-    for i, c in enumerate(cols):
+    # Пары занимают по 2 строки: (1-2), (3-4), (5-6)
+    pair_offsets = [(1, 2), (3, 4), (5, 6)] 
+    
+    for pair_idx, (off1, off2) in enumerate(pair_offsets):
         subj, room, meta = "", "", ""
-        
-        for r in search_range:
-            val = str(df.iloc[r, c]).strip()
-            if val.lower() == 'nan' or not val: continue
-
-            # Метаданные (вид занятия)
-            if any(x in val.lower() for x in ['пз', ' л', ' т', 'вси', 'гз', ' с ', 'па', 'уп', 'з/о']):
-                if not meta: meta = val
-            # Кабинет (цифры или цифры+буква в конце)
-            elif re.search(r'\d+[а-яa-z]?$', val.lower()) and len(val) < 6:
-                if not room: room = val
-            # Предмет (текст)
-            elif len(val) > 2 and not val.replace('.','').isdigit():
-                if not subj: subj = val
+        for c in cols:
+            if c >= df.shape[1]: continue
+            for r_off in [off1, off2]:
+                curr_r = date_row + r_off
+                if curr_r >= df.shape[0]: continue
+                
+                val = str(df.iloc[curr_r, c]).strip()
+                if not val or val.lower() == 'nan': continue
+                
+                # Тип занятия
+                if any(x in val.lower() for x in ['пз', ' л', ' т', 'вси', 'гз', ' с ', 'па', 'уп', 'з/о']):
+                    meta = val
+                # Кабинет
+                elif re.search(r'\d+[а-яa-z]?$', val.lower()) and len(val) < 6:
+                    room = val
+                # Предмет
+                elif len(val) > 2 and not val.replace('.','').isdigit():
+                    subj = val
 
         if subj:
-            raw_lessons.append({'idx': i+1, 'subj': subj, 'meta': meta, 'room': room})
+            raw_lessons.append({'idx': pair_idx + 1, 'subj': subj, 'meta': meta, 'room': room})
         elif i > 0 and raw_lessons:
-            # Склейка по горизонтали (объединенные ячейки)
+            # Склеивание по горизонтали
             prev = raw_lessons[-1]
-            raw_lessons.append({'idx': i+1, 'subj': prev['subj'], 'meta': prev['meta'], 'room': prev['room']})
+            raw_lessons.append({'idx': pair_idx + 1, 'subj': prev['subj'], 'meta': prev['meta'], 'room': prev['room']})
             
     return raw_lessons
 
@@ -109,12 +115,12 @@ def format_lessons(lessons):
 async def main():
     bot = Bot(token=API_TOKEN)
     try:
-        try: df = pd.read_excel('schedule.xlsx', header=None)
-        except: df = pd.read_csv('schedule.csv', header=None)
-    except Exception as e:
-        print(f"Ошибка: {e}"); return
+        # Читаем лист с группой 7-21 (обычно 3-й по счету)
+        df = pd.read_excel('schedule.xlsx', header=None, sheet_name=2)
+    except:
+        df = pd.read_excel('schedule.xlsx', header=None)
 
-    # Целевая дата: завтра (с учетом МСК +3)
+    # Завтра (МСК +3)
     target = datetime.now() + timedelta(hours=3) + timedelta(days=1)
     if target.weekday() == 6: target += timedelta(days=1)
 
@@ -124,7 +130,7 @@ async def main():
     final_text = f"📅 **Расписание на завтра ({target.day} {MONTHS_RU[target.month]}, {day_name}):**\n\n"
     final_text += format_lessons(today_lessons) if today_lessons else "Пар не найдено. 🎉\n"
 
-    # Блок ВАЖНОЕ
+    # Важное
     important_content = ""
     found_days, offset = 0, 1
     while found_days < 2 and offset < 10:
@@ -132,7 +138,6 @@ async def main():
         offset += 1
         if check_date.weekday() == 6: continue
         f_lessons = get_schedule_for_date(df, check_date)
-        # Фильтр: убираем лекции (л) и ГЗ
         vazhno = [l for l in f_lessons if not any(x in str(l['meta']).lower() for x in [' л', 'л ', 'гз']) and str(l['meta']).lower().strip() != 'л']
 
         if vazhno:
