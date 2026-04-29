@@ -50,43 +50,47 @@ def get_schedule_for_date(df, target_date):
     
     if date_row == -1: return []
 
-    # Находим базовую строку группы 7-21 для этого блока даты
-    # Обычно это строки 10, 23, 36 и т.д. в зависимости от блока
-    base_group_row = -1
-    for r in range(date_row, date_row + 20):
-        if r < df.shape[0] and "7-21" in str(df.iloc[r, 0]):
-            base_group_row = r
+    base_row_721 = -1
+    for r in range(date_row, min(date_row + 20, df.shape[0])):
+        if "7-21" in str(df.iloc[r, 0]):
+            base_row_721 = r
             break
             
-    if base_group_row == -1: return []
+    if base_row_721 == -1: return []
 
     raw_lessons = []
-    # Смещения для трех пар (каждая пара в своем столбце)
-    # 1 пара - 1-й столбец дня, 2 пара - 2-й, 3 пара - 3-й
     for i, c in enumerate(cols):
         if c >= df.shape[1]: continue
         
-        # 1. Метаданные: Строка выше 7-21
-        meta = str(df.iloc[base_group_row - 1, c]).strip()
+        # 1. Метаданные: всегда над строчкой 7-21
+        meta = str(df.iloc[base_row_721 - 1, c]).strip()
         if meta.lower() == 'nan': meta = ""
 
-        # 2. Предмет: Строка 7-21
-        subj = str(df.iloc[base_group_row, c]).strip()
+        # 2. Предмет и Аудитория
+        subj_721 = str(df.iloc[base_row_721, c]).strip()
+        subj_821 = str(df.iloc[base_row_721 + 1, c]).strip()
         
-        # 3. Аудитория: 
-        # Проверяем строку ниже 7-21 (обычная пара)
-        room = str(df.iloc[base_group_row + 1, c]).strip()
-        
-        # Если в строке 7-21 пусто, но в 8-21 (ниже) есть текст — значит ячейка объединена
-        # или название предмета "упало" ниже. Проверим строку ниже.
-        if subj.lower() == 'nan' or not subj:
-            subj = str(df.iloc[base_group_row + 1, c]).strip() # Пробуем взять из строки 8-21
-            room = str(df.iloc[base_group_row + 2, c]).strip() # Кабинет тогда еще ниже
+        final_subj = ""
+        final_room = ""
 
-        if subj.lower() != 'nan' and len(subj) > 1:
-            # Очистка кабинета от 'nan'
-            final_room = room if room.lower() != 'nan' else ""
-            raw_lessons.append({'idx': i + 1, 'subj': subj, 'meta': meta, 'room': final_room})
+        # Если в строке 7-21 есть предмет (индивидуальная пара)
+        if subj_721.lower() != 'nan' and len(subj_721) > 1:
+            final_subj = subj_721
+            # Аудитория под строчкой 7-21
+            room_val = str(df.iloc[base_row_721 + 1, c]).strip()
+            if room_val.lower() != 'nan' and (re.search(r'\d', room_val) or 'ауд' in room_val.lower()):
+                final_room = room_val
+        
+        # Если в строке 7-21 пусто, но в строке 8-21 есть предмет (совместная пара)
+        elif subj_821.lower() != 'nan' and len(subj_821) > 1:
+            final_subj = subj_821
+            # Аудитория под строчкой 8-21
+            room_val = str(df.iloc[base_row_721 + 2, c]).strip()
+            if room_val.lower() != 'nan' and (re.search(r'\d', room_val) or 'ауд' in room_val.lower()):
+                final_room = room_val
+
+        if final_subj:
+            raw_lessons.append({'idx': i + 1, 'subj': final_subj, 'meta': meta, 'room': final_room})
             
     return raw_lessons
 
@@ -103,20 +107,20 @@ def format_lessons(lessons):
     res = ""
     for m in merged:
         idx_str = f"{m['indices'][0]}-{m['indices'][-1]}" if len(m['indices']) > 1 else f"{m['indices'][0]}"
-        room_str = f" [каб. {m['room']}]" if m['room'] else ""
-        res += f"• {idx_str} пара: {m['subj']}{room_str} {parse_metadata(m['meta'])}\n"
+        meta_part = f" {parse_metadata(m['meta'])}" if m['meta'] else ""
+        room_part = f" {m['room']}" if m['room'] else ""
+        res += f"• {idx_str} пара: {m['subj']}{meta_part}{room_part}\n"
     return res
 
 async def main():
     bot = Bot(token=API_TOKEN)
     if not os.path.exists(FILE_NAME): return
     try:
-        # Читаем лист с расписанием (индекс 2)
         df = pd.read_excel(FILE_NAME, header=None, sheet_name=2)
     except:
         df = pd.read_excel(FILE_NAME, header=None)
 
-    target = datetime.now() + timedelta(hours=3) + timedelta(days=7)
+    target = datetime.now() + timedelta(hours=3) + timedelta(days=6)
     if target.weekday() == 6: target += timedelta(days=1)
 
     today_lessons = get_schedule_for_date(df, target)
@@ -125,7 +129,6 @@ async def main():
     final_text = f"📅 **Расписание на завтра ({target.day} {MONTHS_RU[target.month]}, {day_name}):**\n\n"
     final_text += format_lessons(today_lessons) if today_lessons else "Пар не найдено. 🎉\n"
 
-    # Важное
     important_content = ""
     found_days, offset = 0, 1
     while found_days < 2 and offset < 10:
