@@ -7,20 +7,12 @@ from aiogram import Bot
 
 API_TOKEN = os.getenv('API_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
-
-# Точное имя вашего файла
 FILE_NAME = '4 курс 8 фак весна 25-26.xlsx'
 
 MONTHS_RU = {
     1: "января", 2: "февраля", 3: "марта", 4: "апреля",
     5: "мая", 6: "июня", 7: "июля", 8: "августа",
     9: "сентября", 10: "октября", 11: "ноября", 12: "декабря"
-}
-
-MONTHS_ROOTS = {
-    1: "январ", 2: "феврал", 3: "март", 4: "апрел",
-    5: "май", 6: "июн", 7: "июл", 8: "август",
-    9: "сентябр", 10: "октябр", 11: "ноябр", 12: "декабр"
 }
 
 DAYS_RU = {
@@ -31,12 +23,21 @@ DAYS_RU = {
 def clean_subj(s):
     return re.sub(r'[^a-zA-Zа-яА-Я0-9]', '', str(s)).lower()
 
+def is_meta(s):
+    """Проверяет, является ли строка метаданными (тема, занятие, тип)"""
+    s = str(s).lower()
+    # Если есть комбинация цифр и ПЗ, Л, Т, С
+    if re.search(r'\d+.*\d+.*(пз|л|т|с|вси|гз)', s): return True
+    if len(s.split()) >= 2 and any(x in s for x in ['пз', 'л', 'т', 'вси']): return True
+    return False
+
 def parse_metadata(meta_str):
     s = str(meta_str).strip().lower()
-    if s == 'nan' or not s or s.isdigit(): return ""
+    if s == 'nan' or not s: return ""
+    # Ищем формат '10 97 пз'
     match = re.search(r'(\d+)\s+(\d+)\s+([а-яa-z/]+)', s)
     if match: return f"({match.group(1)} т {match.group(2)} {match.group(3)})"
-    return f"({s.rstrip('.')})"
+    return f"({s})"
 
 def get_schedule_for_date(df, target_date):
     weekday = target_date.weekday()
@@ -59,32 +60,36 @@ def get_schedule_for_date(df, target_date):
     if date_row == -1: return []
 
     raw_lessons = []
-    pair_offsets = [(1, 2), (3, 4), (5, 6)] 
+    # Каждая пара — блок из строк под датой
+    offsets = [(1, 2), (3, 4), (5, 6)] 
     
-    for pair_idx, (off1, off2) in enumerate(pair_offsets):
+    for pair_idx, (r1_off, r2_off) in enumerate(offsets):
         subj, room, meta = "", "", ""
         for c in cols:
             if c >= df.shape[1]: continue
-            for r_off in [off1, off2]:
+            
+            # Смотрим ячейку НАД основной строкой пары для поиска метаданных
+            potential_meta = str(df.iloc[date_row + r1_off - 1, c]).strip()
+            if is_meta(potential_meta): meta = potential_meta
+
+            for r_off in [r1_off, r2_off]:
                 curr_r = date_row + r_off
                 if curr_r >= df.shape[0]: continue
-                
                 val = str(df.iloc[curr_r, c]).strip()
                 if not val or val.lower() == 'nan': continue
                 
-                if any(x in val.lower() for x in ['пз', ' л', ' т', 'вси', 'гз', ' с ', 'па', 'уп', 'з/о']):
-                    meta = val
-                elif re.search(r'\d+[а-яa-z]?$', val.lower()) and len(val) < 6:
-                    room = val
-                elif len(val) > 2 and not val.replace('.','').isdigit():
-                    subj = val
+                # Если это метаданные, которые мы еще не нашли
+                if is_meta(val):
+                    if not meta: meta = val
+                # Если это кабинет (цифры или короткий код типа '1 ауд')
+                elif re.search(r'^\d+\s?[а-я]?$|^[а-я]{1,3}\d+$|ауд', val.lower()):
+                    if not room: room = val
+                # Иначе это название предмета (ИНО, ФП, ПР, ОХВБ...)
+                else:
+                    if not subj: subj = val
 
         if subj:
             raw_lessons.append({'idx': pair_idx + 1, 'subj': subj, 'meta': meta, 'room': room})
-        elif pair_idx > 0 and raw_lessons: 
-            prev = raw_lessons[-1]
-            raw_lessons.append({'idx': pair_idx + 1, 'subj': prev['subj'], 'meta': prev['meta'], 'room': prev['room']})
-            
     return raw_lessons
 
 def format_lessons(lessons):
@@ -94,36 +99,26 @@ def format_lessons(lessons):
         s_key = clean_subj(l['subj'])
         if merged and merged[-1]['subj_key'] == s_key:
             merged[-1]['indices'].append(l['idx'])
-            if len(str(l['meta'])) > len(str(merged[-1]['meta'])): merged[-1]['meta'] = l['meta']
-            if not merged[-1]['room'] and l['room']: merged[-1]['room'] = l['room']
+            if l['meta'] and not merged[-1]['meta']: merged[-1]['meta'] = l['meta']
+            if l['room'] and not merged[-1]['room']: merged[-1]['room'] = l['room']
         else:
-            merged.append({'indices': [l['idx']], 'subj': l['subj'], 'subj_key': s_key, 'meta': l['meta'], 'room': l['room']})
+            merged.append({'indices':[l['idx']], 'subj':l['subj'], 'subj_key':s_key, 'meta':l['meta'], 'room':l['room']})
     
     res = ""
     for m in merged:
-        start_idx, end_idx = m['indices'][0], m['indices'][-1]
-        idx_str = f"{start_idx}-{end_idx}" if start_idx != end_idx else f"{start_idx}"
+        idx_str = f"{m['indices'][0]}-{m['indices'][-1]}" if len(m['indices']) > 1 else f"{m['indices'][0]}"
         room_str = f" [каб. {m['room']}]" if m['room'] else ""
         res += f"• {idx_str} пара: {m['subj']}{room_str} {parse_metadata(m['meta'])}\n"
     return res
 
 async def main():
     bot = Bot(token=API_TOKEN)
-    
-    # Проверка наличия файла перед чтением
-    if not os.path.exists(FILE_NAME):
-        print(f"❌ ОШИБКА: Файл '{FILE_NAME}' не найден в корне репозитория!")
-        print(f"DEBUG: Доступные файлы: {os.listdir('.')}")
-        return
-
+    if not os.path.exists(FILE_NAME): return
     try:
-        # Пытаемся загрузить лист с группой 7-21 (индекс 2)
         df = pd.read_excel(FILE_NAME, header=None, sheet_name=2)
-    except Exception as e:
-        print(f"DEBUG: Не удалось загрузить лист по индексу 2: {e}")
+    except:
         df = pd.read_excel(FILE_NAME, header=None)
 
-    # Завтра (МСК +3)
     target = datetime.now() + timedelta(hours=3) + timedelta(days=1)
     if target.weekday() == 6: target += timedelta(days=1)
 
@@ -133,6 +128,7 @@ async def main():
     final_text = f"📅 **Расписание на завтра ({target.day} {MONTHS_RU[target.month]}, {day_name}):**\n\n"
     final_text += format_lessons(today_lessons) if today_lessons else "Пар не найдено. 🎉\n"
 
+    # Блок Важно
     important_content = ""
     found_days, offset = 0, 1
     while found_days < 2 and offset < 10:
@@ -141,7 +137,6 @@ async def main():
         if check_date.weekday() == 6: continue
         f_lessons = get_schedule_for_date(df, check_date)
         vazhno = [l for l in f_lessons if not any(x in str(l['meta']).lower() for x in [' л', 'л ', 'гз']) and str(l['meta']).lower().strip() != 'л']
-
         if vazhno:
             v_day_name = DAYS_RU[check_date.weekday()]
             important_content += f"\n📍 {v_day_name}, {check_date.day} {MONTHS_RU[check_date.month]}:\n"
