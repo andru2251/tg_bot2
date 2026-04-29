@@ -124,33 +124,34 @@ async def main():
     except:
         df = pd.read_excel(FILE_NAME, header=None)
 
-    target = datetime.now() + timedelta(hours=3) + timedelta(days=1)
-    if target.weekday() == 6: target += timedelta(days=1)
-
-    today_lessons = get_schedule_for_date(df, target)
-    day_name = DAYS_RU[target.weekday()]
+    # Определяем начальную дату (например, завтра)
+    start_date = datetime.now() + timedelta(hours=3) + timedelta(days=1)
     
-    final_text = f"📅 **Расписание на завтра ({target.day} {MONTHS_RU[target.month]}, {day_name}):**\n\n"
-    final_text += format_lessons(today_lessons) if today_lessons else "Пар не найдено. 🎉\n"
+    final_text = f"📅 **Расписание на неделю (с {start_date.day} {MONTHS_RU[start_date.month]}):**\n\n"
 
-    important_content = ""
-    found_days, offset = 0, 1
-    while found_days < 2 and offset < 10:
-        check_date = target + timedelta(days=offset)
-        offset += 1
-        if check_date.weekday() == 6: continue
-        f_lessons = get_schedule_for_date(df, check_date)
-        vazhno = [l for l in f_lessons if not any(x in str(l['meta']).lower() for x in [' л', 'л ', 'гз']) and str(l['meta']).lower().strip() != 'л']
-        if vazhno:
-            v_day_name = DAYS_RU[check_date.weekday()]
-            important_content += f"\n📍 {v_day_name}, {check_date.day} {MONTHS_RU[check_date.month]}:\n"
-            important_content += format_lessons(vazhno)
-        found_days += 1
+    # Цикл на 7 дней
+    for i in range(7):
+        current_date = start_date + timedelta(days=i)
+        
+        # Пропускаем воскресенья
+        if current_date.weekday() == 6:
+            continue
+            
+        lessons = get_schedule_for_date(df, current_date)
+        day_name = DAYS_RU[current_date.weekday()]
+        
+        final_text += f"📍 **{current_date.day} {MONTHS_RU[current_date.month]} ({day_name}):**\n"
+        
+        if lessons:
+            final_text += format_lessons(lessons)
+        else:
+            final_text += "🎉 Пар не найдено\n"
+        
+        final_text += "\n" # Разделитель между днями
 
-    if important_content:
-        final_text += f"\n⚠️ **ВАЖНО:**\n{important_content}"
-
+    # Отправляем одно большое сообщение
     await bot.send_message(CHAT_ID, final_text, parse_mode="Markdown")
+    
     session = await bot.get_session()
     await session.close()
 
