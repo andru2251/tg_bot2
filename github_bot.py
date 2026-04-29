@@ -116,9 +116,11 @@ async def main():
     except:
         df = pd.read_excel(FILE_NAME, header=None)
 
-        target = datetime.now() + timedelta(hours=3) + timedelta(days=7)
-        today_lessons = get_schedule_for_date(df, target)
-        day_name = DAYS_RU[target.weekday()]
+    target = datetime.now() + timedelta(hours=3) + timedelta(days=7)
+    if target.weekday() == 6: target += timedelta(days=1)
+
+    today_lessons = get_schedule_for_date(df, target)
+    day_name = DAYS_RU[target.weekday()]
     
     final_text = f"📅 **Расписание на завтра ({target.day} {MONTHS_RU[target.month]}, {day_name}):**\n\n"
     final_text += format_lessons(today_lessons) if today_lessons else "Пар не найдено. 🎉\n"
