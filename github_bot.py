@@ -62,34 +62,25 @@ def get_schedule_for_date(df, target_date):
     for i, c in enumerate(cols):
         if c >= df.shape[1]: continue
         
-        # 1. Метаданные (всегда над 7-21)
         meta = str(df.iloc[base_row_721 - 1, c]).strip()
         if meta.lower() == 'nan': meta = ""
 
-        # 2. Определяем тип пары через контрольную строку (7-21 + 2)
         check_val = str(df.iloc[base_row_721 + 2, c]).strip().lower()
-        is_joint = True if check_val == 'nan' or not check_val else False # Если пусто - совместная
+        is_joint = True if check_val == 'nan' or not check_val else False
 
-        final_subj = ""
-        final_room = ""
+        final_subj, final_room = "", ""
 
         if not is_joint:
-            # РАЗДЕЛЬНАЯ ПАРА
             final_subj = str(df.iloc[base_row_721, c]).strip()
             room_val = str(df.iloc[base_row_721 + 1, c]).strip()
             final_room = room_val if room_val.lower() != 'nan' else ""
         else:
-            # СОВМЕСТНАЯ ПАРА
-            # В совместной ячейке текст может быть в строке 7-21 или 8-21
             subj_top = str(df.iloc[base_row_721, c]).strip()
             subj_bot = str(df.iloc[base_row_721 + 1, c]).strip()
             final_subj = subj_top if subj_top.lower() != 'nan' and len(subj_top) > 1 else subj_bot
-            
-            # Аудитория строго в 7-21 + 4
             room_val = str(df.iloc[base_row_721 + 4, c]).strip()
             final_room = room_val if room_val.lower() != 'nan' else ""
 
-        # Подхват для 1-2, 1-3 пар (горизонтальное объединение)
         if (not final_subj or final_subj.lower() == 'nan') and i > 0 and raw_lessons:
             final_subj = raw_lessons[-1]['subj']
             meta = raw_lessons[-1]['meta']
@@ -128,18 +119,36 @@ async def main():
     except:
         df = pd.read_excel(FILE_NAME, header=None)
 
-    start_date = datetime.now() + timedelta(hours=3) + timedelta(days=1)
-    final_text = f"📅 **Расписание на неделю (с {start_date.day} {MONTHS_RU[start_date.month]}):**\n\n"
+    # Целевая дата: завтра (с учетом МСК +3)
+    target = datetime.now() + timedelta(hours=3) + timedelta(days=1)
+    if target.weekday() == 6: target += timedelta(days=1)
 
-    for i in range(7):
-        curr = start_date + timedelta(days=i)
-        if curr.weekday() == 6: continue 
+    today_lessons = get_schedule_for_date(df, target)
+    day_name = DAYS_RU[target.weekday()]
+    
+    final_text = f"📅 **Расписание на завтра ({target.day} {MONTHS_RU[target.month]}, {day_name}):**\n\n"
+    final_text += format_lessons(today_lessons) if today_lessons else "Пар не найдено. 🎉\n"
+
+    # Блок ВАЖНОЕ (на 2 дня вперед от завтра)
+    important_content = ""
+    found_days, offset = 0, 1
+    while found_days < 2 and offset < 10:
+        check_date = target + timedelta(days=offset)
+        offset += 1
+        if check_date.weekday() == 6: continue
         
-        day_lessons = get_schedule_for_date(df, curr)
-        d_name = DAYS_RU[curr.weekday()]
-        final_text += f"📍 **{curr.day} {MONTHS_RU[curr.month]} ({d_name}):**\n"
-        final_text += format_lessons(day_lessons) if day_lessons else "🎉 Пар не найдено\n"
-        final_text += "\n"
+        f_lessons = get_schedule_for_date(df, check_date)
+        # Фильтр: убираем лекции (л) и ГЗ
+        vazhno = [l for l in f_lessons if not any(x in str(l['meta']).lower() for x in [' л', 'л ', 'гз']) and str(l['meta']).lower().strip() != 'л']
+
+        if vazhno:
+            v_day_name = DAYS_RU[check_date.weekday()]
+            important_content += f"\n📍 {v_day_name}, {check_date.day} {MONTHS_RU[check_date.month]}:\n"
+            important_content += format_lessons(vazhno)
+        found_days += 1
+
+    if important_content:
+        final_text += f"\n⚠️ **ВАЖНО:**\n{important_content}"
 
     await bot.send_message(CHAT_ID, final_text, parse_mode="Markdown")
     session = await bot.get_session()
