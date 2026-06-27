@@ -7,7 +7,7 @@ from aiogram import Bot
 
 API_TOKEN = os.getenv('API_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
-FILE_NAME = '4 курс 8 фак весна 25-26.xlsx'
+FILE_NAME = '5 курс 8 фак осень 26-27.xlsx'
 
 MONTHS_RU = {
     1: "января", 2: "февраля", 3: "марта", 4: "апреля",
